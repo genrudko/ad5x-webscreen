@@ -19,7 +19,6 @@ fi
 
 case "${1:-status}" in
     start|stop|restart|status) run_service "$1" ;;
-    token) cat "$CONFIG_ROOT/mod_data/$PLUGIN_NAME/control.token" ;;
     config) cat "$CONFIG_ROOT/mod_data/$PLUGIN_NAME/webscreen.ini" ;;
-    *) echo "Usage: $0 {start|stop|restart|status|token|config}"; exit 1 ;;
+    *) echo "Usage: $0 {start|stop|restart|status|config}"; exit 1 ;;
 esac
