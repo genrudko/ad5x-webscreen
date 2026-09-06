@@ -1,0 +1,145 @@
+#!/bin/sh
+
+NAME="ad5x_webscreen"
+DESC="AD5X WebScreen"
+DAEMON="/opt/config/mod_data/plugins/ad5x_webscreen/webscreen.py"
+CONFIG="/opt/config/mod_data/ad5x_webscreen/webscreen.ini"
+PIDFILE="/var/run/ad5x_webscreen.pid"
+LOGFILE="/opt/config/mod_data/log/ad5x_webscreen.log"
+
+ini_get() {
+    section="$1"
+    key="$2"
+    fallback="$3"
+    value=$(awk -v section="[$section]" -v key="$key" '
+        BEGIN { active=0 }
+        /^[[:space:]]*\[/ {
+            line=$0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            active=(line==section)
+            next
+        }
+        active {
+            line=$0
+            sub(/[;#].*$/, "", line)
+            split(line, pair, "=")
+            k=pair[1]
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            if (k==key) {
+                sub(/^[^=]*=/, "", line)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+                print line
+                exit
+            }
+        }
+    ' "$CONFIG" 2>/dev/null)
+    [ -n "$value" ] && printf '%s\n' "$value" || printf '%s\n' "$fallback"
+}
+
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [ -r "/proc/$pid/cmdline" ]; then
+        tr '\000' ' ' < "/proc/$pid/cmdline" | grep -q 'ad5x_webscreen/webscreen.py' || return 1
+    fi
+    return 0
+}
+
+port_in_use() {
+    port="$1"
+    command -v netstat >/dev/null 2>&1 || return 1
+    netstat -ltn 2>/dev/null | awk -v suffix=":$port" '
+        NR>2 {
+            addr=$4
+            if (length(addr) >= length(suffix) && substr(addr, length(addr)-length(suffix)+1) == suffix) found=1
+        }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+start() {
+    cd / 2>/dev/null || true
+    echo "Starting $DESC..."
+
+    if is_running; then
+        echo "$NAME is already running (PID $(cat "$PIDFILE"))"
+        return 0
+    fi
+    rm -f "$PIDFILE"
+
+    [ -f "$CONFIG" ] || { echo "Missing config: $CONFIG" >&2; return 1; }
+    [ -f "$DAEMON" ] || { echo "Missing daemon: $DAEMON" >&2; return 1; }
+
+    PORT=$(ini_get server port 8010)
+    NICE=$(ini_get server nice 10)
+
+    if port_in_use "$PORT"; then
+        echo "Cannot start $NAME: TCP port $PORT is already in use" >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$LOGFILE")" /var/run
+    nice -n "$NICE" python3 "$DAEMON" --config "$CONFIG" >>"$LOGFILE" 2>&1 &
+    pid=$!
+
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "$pid" > "$PIDFILE"
+        echo "$NAME started (PID $pid, port $PORT)"
+        return 0
+    fi
+
+    echo "Failed to start $NAME; see $LOGFILE" >&2
+    rm -f "$PIDFILE"
+    tail -n 20 "$LOGFILE" 2>/dev/null || true
+    return 1
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    if ! is_running; then
+        rm -f "$PIDFILE"
+        echo "$NAME is not running"
+        return 0
+    fi
+
+    pid=$(cat "$PIDFILE")
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PIDFILE"
+    echo "$NAME stopped"
+}
+
+status() {
+    if is_running; then
+        port=$(ini_get server port 8010)
+        echo "$NAME is running (PID $(cat "$PIDFILE"), port $port)"
+        return 0
+    fi
+    [ -f "$PIDFILE" ] && echo "$NAME is not running (stale PID file)" || echo "$NAME is not running"
+    return 1
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) restart ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
