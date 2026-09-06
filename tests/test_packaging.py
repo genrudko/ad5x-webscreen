@@ -10,6 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 class TestPackaging(unittest.TestCase):
     def test_required_plugin_files_exist(self):
         for name in (
+            "ad5x_webscreen.cfg",
             "install.sh",
             "uninstall.sh",
             "update.sh",
