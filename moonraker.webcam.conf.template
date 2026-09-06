@@ -1,0 +1,7 @@
+[webcam screen]
+enabled: true
+service: iframe
+target_fps: 10
+stream_url: http://@PRINTER_IP@:8010/stream
+snapshot_url: http://@PRINTER_IP@:8010/snapshot
+aspect_ratio: 800:480
