@@ -4,7 +4,8 @@ set -e
 PLUGIN_NAME="ad5x_webscreen"
 CHROOT_PLUGIN_DIR="/opt/config/mod_data/plugins/$PLUGIN_NAME"
 UPDATE_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.update.conf]"
-WEBCAM_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
+WEBCAM_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.webcam.runtime.conf]"
+LEGACY_WEBCAM_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
 
 ZMOD_ENV=""
 [ -f /usr/data/zmod/zmod/.shell/0.sh ] && ZMOD_ENV=/usr/data/zmod/zmod/.shell/0.sh
@@ -37,7 +38,7 @@ LOG_DIR="$CONFIG_ROOT/mod_data/log"
 MOONRAKER_PLUGINS="$CONFIG_ROOT/mod_data/plugins.moonraker.conf"
 CONFIG="$DATA_DIR/webscreen.ini"
 
-chmod +x "$SCRIPT_DIR/webscreen.py" "$SCRIPT_DIR/S71ad5x_webscreen" "$SCRIPT_DIR/control.sh" "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh" "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/power_on_hook.sh"
+chmod +x "$SCRIPT_DIR/webscreen.py" "$SCRIPT_DIR/S71ad5x_webscreen" "$SCRIPT_DIR/control.sh" "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh" "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/power_on_hook.sh" "$SCRIPT_DIR/configure_webcam.sh"
 mkdir -p "$DATA_DIR" "$LOG_DIR" "$INIT_DIR"
 
 if [ ! -f "$CONFIG" ]; then
@@ -82,11 +83,22 @@ fi
 "$SCRIPT_DIR/power_on_hook.sh" install
 
 [ -f "$MOONRAKER_PLUGINS" ] || : > "$MOONRAKER_PLUGINS"
+if grep -qF "$LEGACY_WEBCAM_INCLUDE" "$MOONRAKER_PLUGINS"; then
+    tmp="${MOONRAKER_PLUGINS}.tmp.$$"
+    awk -v legacy="$LEGACY_WEBCAM_INCLUDE" '$0 != legacy { print }' "$MOONRAKER_PLUGINS" > "$tmp"
+    mv "$tmp" "$MOONRAKER_PLUGINS"
+fi
 for INCLUDE_LINE in "$UPDATE_INCLUDE" "$WEBCAM_INCLUDE"; do
     if ! grep -qF "$INCLUDE_LINE" "$MOONRAKER_PLUGINS"; then
         printf '%s\n' "$INCLUDE_LINE" >> "$MOONRAKER_PLUGINS"
     fi
 done
+
+if [ "${AD5X_WEBSCREEN_NO_REBOOT:-0}" = "1" ]; then
+    "$SCRIPT_DIR/configure_webcam.sh" --restart-if-changed
+else
+    "$SCRIPT_DIR/configure_webcam.sh"
+fi
 
 # Start immediately. The init script performs a port preflight and writes its PID only after startup succeeds.
 if [ -f /ZMOD ]; then
