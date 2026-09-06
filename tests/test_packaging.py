@@ -18,6 +18,7 @@ class TestPackaging(unittest.TestCase):
             "S71ad5x_webscreen",
             "webscreen.ini.example",
             "moonraker.update.conf",
+            "moonraker.webcam.conf",
             "control.sh",
             "README.md",
             "VERSION",
@@ -47,13 +48,17 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("status)", text)
         self.assertNotIn("webscreen_poc", text)
 
-    def test_install_token_generation_uses_zmod_python_not_host_utilities(self):
+    def test_install_has_no_control_token_or_token_generation(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
-        self.assertIn("import secrets", install)
-        self.assertIn('chroot "$MOD" /bin/sh -lc', install)
-        self.assertNotIn('command -v python3', install)
-        self.assertNotIn("od -A", install)
-        self.assertNotIn("/usr/prog/Python-3.8.2/bin/python3", install)
+        control = (ROOT / "control.sh").read_text(encoding="utf-8")
+        config = (ROOT / "webscreen.ini.example").read_text(encoding="utf-8")
+        daemon = (ROOT / "webscreen.py").read_text(encoding="utf-8")
+        joined = "\n".join((install, control, config, daemon))
+        self.assertNotIn("control.token", joined)
+        self.assertNotIn("import secrets", install)
+        self.assertNotIn("X-WebScreen-Token", daemon)
+        self.assertNotIn("control_token", daemon)
+        self.assertNotIn("token)", control)
 
     def test_install_registers_update_manager_without_modifying_zmod_sources(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
@@ -120,6 +125,26 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("plugins.moonraker.conf", text)
         self.assertIn("ad5x_webscreen", text)
         self.assertNotIn("rm -rf /usr/data/zmod", text)
+
+    def test_fluidd_screen_webcam_matches_creator_contract(self):
+        text = (ROOT / "moonraker.webcam.conf").read_text(encoding="utf-8")
+        self.assertIn("[webcam screen]", text)
+        self.assertIn("service: iframe", text)
+        self.assertIn("target_fps: 10", text)
+        self.assertIn("stream_url: /screen/stream", text)
+        self.assertIn("snapshot_url: /screen/snapshot", text)
+        self.assertIn("aspect_ratio: 800:480", text)
+
+    def test_install_and_uninstall_manage_webcam_include_idempotently(self):
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        uninstall = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
+        include = "[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
+        self.assertIn(include, install)
+        self.assertIn(include, uninstall)
+        self.assertIn('for INCLUDE_LINE in "$UPDATE_INCLUDE" "$WEBCAM_INCLUDE"; do', install)
+        self.assertIn('grep -qF "$INCLUDE_LINE"', install)
+        self.assertIn("printf '%s\\n' \"$INCLUDE_LINE\"", install)
+        self.assertIn('awk -v update="$UPDATE_INCLUDE" -v webcam="$WEBCAM_INCLUDE"', uninstall)
 
 
 if __name__ == "__main__":
