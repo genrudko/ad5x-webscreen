@@ -47,12 +47,13 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("status)", text)
         self.assertNotIn("webscreen_poc", text)
 
-    def test_install_token_generation_does_not_depend_on_host_python(self):
+    def test_install_token_generation_uses_zmod_python_not_host_utilities(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
-        self.assertIn("/dev/urandom", install)
-        self.assertIn("od -An -tx1", install)
-        self.assertNotIn("import secrets", install)
+        self.assertIn("import secrets", install)
+        self.assertIn('chroot "$MOD" /bin/sh -lc', install)
         self.assertNotIn('command -v python3', install)
+        self.assertNotIn("od -A", install)
+        self.assertNotIn("/usr/prog/Python-3.8.2/bin/python3", install)
 
     def test_install_registers_update_manager_without_modifying_zmod_sources(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
