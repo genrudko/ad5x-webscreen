@@ -45,14 +45,16 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 if [ ! -s "$TOKEN_FILE" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > "$TOKEN_FILE"
-    elif [ -n "${PYTHON:-}" ] && [ -x "$PYTHON" ]; then
-        "$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(24))' > "$TOKEN_FILE"
-    else
-        dd if=/dev/urandom bs=24 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
-        printf '\n' >> "$TOKEN_FILE"
+    # Do not use the printer host Python here. Z-Mod exposes a Python 3.8
+    # executable on the host whose shared-library environment is not valid for
+    # arbitrary direct invocation. Token generation only needs kernel entropy.
+    TOKEN=$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    if [ "${#TOKEN}" -ne 48 ]; then
+        echo "Failed to generate WebScreen control token" >&2
+        exit 1
     fi
+    ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
+    unset TOKEN
     chmod 600 "$TOKEN_FILE"
 fi
 
