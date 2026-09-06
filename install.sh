@@ -44,6 +44,23 @@ if [ ! -f "$CONFIG" ]; then
     cp "$SCRIPT_DIR/webscreen.ini.example" "$CONFIG"
 fi
 
+migrate_legacy_security() {
+    rm -f "$DATA_DIR/control.token"
+    [ -f "$CONFIG" ] || return 0
+    grep -q '^[[:space:]]*control_token_path[[:space:]]*=' "$CONFIG" || return 0
+
+    tmp="${CONFIG}.tmp.$$"
+    awk '
+        BEGIN { skip=0 }
+        /^[[:space:]]*\[security\][[:space:]]*$/ { skip=1; next }
+        /^[[:space:]]*\[/ { if (skip) skip=0 }
+        !skip { print }
+    ' "$CONFIG" > "$tmp"
+    mv "$tmp" "$CONFIG"
+}
+
+migrate_legacy_security
+
 if [ -f /ZMOD ]; then
     python3 -c 'from PIL import Image' >/dev/null 2>&1 || {
         echo "Pillow is required in the Z-Mod Python environment" >&2
