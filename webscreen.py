@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import configparser
 import fcntl
-import hmac
 import json
 import math
 import os
@@ -23,7 +22,6 @@ from typing import Any
 
 VERSION = "0.1.0"
 DEFAULT_CONFIG_PATH = "/opt/config/mod_data/ad5x_webscreen/webscreen.ini"
-DEFAULT_TOKEN_PATH = "/opt/config/mod_data/ad5x_webscreen/control.token"
 DEFAULT_FB_PATH = "/dev/fb0"
 DEFAULT_FB_SYSFS = "/sys/class/graphics/fb0"
 DEFAULT_INPUT_SYSFS = "/sys/class/input"
@@ -53,7 +51,6 @@ class WebScreenConfig:
     touch_failsafe_s: float = 1.0
     touch_pressure: int = 1200
     helix_settings: str = "/srv/helixscreen/config/settings.json"
-    control_token_path: str = DEFAULT_TOKEN_PATH
 
     @classmethod
     def defaults(cls) -> "WebScreenConfig":
@@ -90,11 +87,6 @@ class WebScreenConfig:
             helix_settings=parser.get(
                 "touch", "helix_settings", fallback=defaults.helix_settings
             ).strip(),
-            control_token_path=parser.get(
-                "security",
-                "control_token_path",
-                fallback=defaults.control_token_path,
-            ).strip(),
         )
         cfg.validate()
         return cfg
@@ -118,8 +110,6 @@ class WebScreenConfig:
             raise ValueError("touch.pressure must be between 1 and 4095")
         if not self.helix_settings.startswith("/"):
             raise ValueError("touch.helix_settings must be absolute")
-        if not self.control_token_path.startswith("/"):
-            raise ValueError("security.control_token_path must be absolute")
 
 
 @dataclass(frozen=True)
@@ -304,19 +294,6 @@ def pack_input_event(timestamp: float, ev_type: int, code: int, value: int) -> b
     return struct.pack("@llHHi", sec, usec, int(ev_type), int(code), int(value))
 
 
-def read_control_token(path: str | Path) -> str:
-    token = Path(path).read_text(encoding="utf-8").strip()
-    if not token:
-        raise ValueError("control token is empty")
-    return token
-
-
-def control_token_matches(expected: str, supplied: str) -> bool:
-    if not expected or not supplied:
-        return False
-    return hmac.compare_digest(expected, supplied)
-
-
 def find_touch_device(
     sys_root: str | Path = DEFAULT_INPUT_SYSFS,
     dev_root: str | Path = DEFAULT_INPUT_DEV,
@@ -387,12 +364,12 @@ pre{white-space:pre-wrap;font-size:13px}
 <body>
 <main>
 <h1>AD5X WebScreen</h1>
-<img id="screen" src="/stream" alt="AD5X screen" draggable="false">
+<img id="screen" src="/streams" alt="AD5X screen" draggable="false">
 <div class="controls">
 <button id="toggle">Enable remote touch</button>
 <span id="armed" class="warn">TOUCH DISABLED</span>
 </div>
-<p class="muted">Remote touch starts disabled. Control requests require the plugin token. Interrupted gestures are released by the server-side failsafe.</p>
+<p class="muted">Remote touch starts disabled. Interrupted gestures are released by the server-side failsafe.</p>
 <pre id="stats">loading stats...</pre>
 </main>
 <script>
@@ -400,14 +377,10 @@ const img=document.getElementById('screen');
 const toggle=document.getElementById('toggle');
 const armed=document.getElementById('armed');
 let enabled=false,pointerDown=false,lastMoveTs=0;
-const TOKEN_KEY='ad5x_webscreen_control_token';
-const params=new URLSearchParams(location.search);
-if(params.get('token')){sessionStorage.setItem(TOKEN_KEY,params.get('token'));params.delete('token');history.replaceState({},'',location.pathname+(params.toString()?'?'+params:''));}
-function token(){return sessionStorage.getItem(TOKEN_KEY)||'';}
 function xyFromEvent(ev){const r=img.getBoundingClientRect();const w=img.naturalWidth||800,h=img.naturalHeight||480;const x=Math.max(0,Math.min(w,(ev.clientX-r.left)*w/r.width));const y=Math.max(0,Math.min(h,(ev.clientY-r.top)*h/r.height));return[x,y];}
-async function api(path,opts={}){const headers=new Headers(opts.headers||{});if(token())headers.set('X-WebScreen-Token',token());return fetch(path,{...opts,headers,cache:'no-store'});}
+function api(path,opts={}){return fetch(path,{...opts,cache:'no-store'});}
 function paint(v){enabled=v;toggle.textContent=v?'Disable remote touch':'Enable remote touch';armed.textContent=v?'TOUCH ENABLED':'TOUCH DISABLED';armed.className=v?'ok':'warn';}
-async function setEnabled(v){if(v&&!token()){const t=prompt('WebScreen control token:');if(!t)return;sessionStorage.setItem(TOKEN_KEY,t.trim());}const r=await api('/touch/enable?value='+(v?'1':'0'),{method:'POST'});if(!r.ok)throw new Error(await r.text());paint(v);}
+async function setEnabled(v){const r=await api('/touch/enable?value='+(v?'1':'0'),{method:'POST'});if(!r.ok)throw new Error(await r.text());paint(v);}
 toggle.addEventListener('click',()=>setEnabled(!enabled).catch(e=>alert('Touch control failed: '+e.message)));
 img.addEventListener('pointerdown',ev=>{if(!enabled)return;ev.preventDefault();pointerDown=true;img.setPointerCapture(ev.pointerId);const[x,y]=xyFromEvent(ev);api(`/touch?e=down&x=${x}&y=${y}`,{method:'POST'});});
 img.addEventListener('pointermove',ev=>{if(!enabled||!pointerDown)return;ev.preventDefault();const now=performance.now();if(now-lastMoveTs<25)return;lastMoveTs=now;const[x,y]=xyFromEvent(ev);api(`/touch?e=move&x=${x}&y=${y}`,{method:'POST'});});
@@ -415,6 +388,44 @@ async function sendUp(ev){if(!enabled||!pointerDown)return;pointerDown=false;if(
 img.addEventListener('pointerup',sendUp);img.addEventListener('pointercancel',sendUp);img.addEventListener('lostpointercapture',sendUp);window.addEventListener('blur',()=>{if(pointerDown)sendUp();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&pointerDown)sendUp();});
 async function updateStats(){try{const r=await fetch('/stats',{cache:'no-store'});const txt=await r.text();document.getElementById('stats').textContent=txt;const m=/touch_enabled=(true|false)/i.exec(txt);if(m)paint(m[1].toLowerCase()==='true');}catch(e){}}
 setInterval(updateStats,1000);updateStats();
+</script>
+</body>
+</html>
+'''.encode("utf-8")
+
+
+def render_iframe_html() -> bytes:
+    # Fluidd's iframe webcam loads /screen/stream through Z-Mod nginx. Keep all
+    # URLs relative so the same page also works directly at :8010/stream.
+    return r'''<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center}
+#screen{display:block;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none;touch-action:none}
+</style>
+</head>
+<body>
+<img id="screen" src="streams" alt="AD5X screen" draggable="false">
+<script>
+const img=document.getElementById('screen');
+let pointerDown=false,lastMoveTs=0;
+function xyFromEvent(ev){
+  const r=img.getBoundingClientRect(),iw=img.naturalWidth||800,ih=img.naturalHeight||480;
+  const imageRatio=iw/ih,boxRatio=r.width/r.height;
+  let w=r.width,h=r.height,ox=0,oy=0;
+  if(boxRatio>imageRatio){w=r.height*imageRatio;ox=(r.width-w)/2;}else{h=r.width/imageRatio;oy=(r.height-h)/2;}
+  const x=(ev.clientX-r.left-ox)*iw/w,y=(ev.clientY-r.top-oy)*ih/h;
+  return[Math.max(0,Math.min(iw,x)),Math.max(0,Math.min(ih,y))];
+}
+function api(path){return fetch(path,{method:'POST',cache:'no-store'});}
+img.addEventListener('pointerdown',ev=>{ev.preventDefault();pointerDown=true;img.setPointerCapture(ev.pointerId);const[x,y]=xyFromEvent(ev);api(`touch?e=down&x=${x}&y=${y}`);});
+img.addEventListener('pointermove',ev=>{if(!pointerDown)return;ev.preventDefault();const now=performance.now();if(now-lastMoveTs<25)return;lastMoveTs=now;const[x,y]=xyFromEvent(ev);api(`touch?e=move&x=${x}&y=${y}`);});
+function sendUp(ev){if(!pointerDown)return;pointerDown=false;if(ev)ev.preventDefault();api('touch?e=up');}
+img.addEventListener('pointerup',sendUp);img.addEventListener('pointercancel',sendUp);img.addEventListener('lostpointercapture',sendUp);window.addEventListener('blur',()=>sendUp());document.addEventListener('visibilitychange',()=>{if(document.hidden)sendUp();});
 </script>
 </body>
 </html>
@@ -935,7 +946,6 @@ class WebScreenService:
         self.framebuffer = FramebufferDevice()
         self.touch = TouchController(config, self.state)
         self.capture = CaptureEngine(config, self.state, self.framebuffer)
-        self.control_token = ""
         self.httpd: WebScreenHTTPServer | None = None
 
     def probe(self, require_touch: bool = False) -> None:
@@ -943,7 +953,6 @@ class WebScreenService:
         geometry = self.framebuffer.geometry()
         self.state.set_geometry(geometry)
         if self.config.touch_allowed:
-            self.control_token = read_control_token(self.config.control_token_path)
             try:
                 self.touch.probe(require_calibration=require_touch)
                 with self.state.lock:
@@ -953,9 +962,6 @@ class WebScreenService:
                     self.state.touch_error = str(exc)
                 if require_touch:
                     raise
-
-    def authorize(self, supplied: str) -> bool:
-        return control_token_matches(self.control_token, supplied)
 
     def clamp_screen_coords(self, x: float, y: float) -> tuple[float, float]:
         with self.state.lock:
@@ -1047,21 +1053,6 @@ class WebScreenRequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         return parsed.path, urllib.parse.parse_qs(parsed.query)
 
-    def _supplied_token(self, query: dict[str, list[str]]) -> str:
-        header = self.headers.get("X-WebScreen-Token", "").strip()
-        if header:
-            return header
-        return query.get("token", [""])[0].strip()
-
-    def _require_control_token(self, query: dict[str, list[str]]) -> bool:
-        app = self.server.app
-        if not app.config.touch_allowed:
-            self._send_bytes(403, "text/plain; charset=utf-8", b"remote touch disabled\n")
-            return False
-        if not app.authorize(self._supplied_token(query)):
-            self._send_bytes(401, "text/plain; charset=utf-8", b"invalid control token\n")
-            return False
-        return True
 
     def do_GET(self) -> None:
         path, _query = self._parsed()
@@ -1069,6 +1060,9 @@ class WebScreenRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/":
             self._send_bytes(200, "text/html; charset=utf-8", render_index_html())
+            return
+        if path == "/stream":
+            self._send_bytes(200, "text/html; charset=utf-8", render_iframe_html())
             return
         if path == "/health":
             self._send_bytes(200, "application/json", b'{"status":"ok"}\n')
@@ -1092,7 +1086,7 @@ class WebScreenRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_bytes(200, "image/jpeg", jpeg)
             return
-        if path != "/stream":
+        if path != "/streams":
             self.send_error(404)
             return
 
@@ -1136,7 +1130,8 @@ class WebScreenRequestHandler(BaseHTTPRequestHandler):
         if path not in ("/touch/enable", "/touch"):
             self.send_error(404)
             return
-        if not self._require_control_token(query):
+        if not app.config.touch_allowed:
+            self._send_bytes(403, "text/plain; charset=utf-8", b"remote touch disabled\n")
             return
 
         try:
@@ -1155,16 +1150,21 @@ class WebScreenRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            event = query.get("e", [""])[0]
             with app.state.lock:
-                if not app.state.touch_enabled:
-                    self._send_bytes(
-                        403,
-                        "text/plain; charset=utf-8",
-                        b"remote touch is not enabled\n",
-                    )
+                enabled = app.state.touch_enabled
+            # Fluidd's SCREEN iframe is directly interactive: first DOWN arms
+            # touch automatically. Process start/reboot still resets it to OFF.
+            if not enabled:
+                if event == "down":
+                    app.touch.enable()
+                elif event == "up":
+                    self._send_bytes(200, "text/plain; charset=utf-8", b"ok\n")
+                    return
+                else:
+                    self._send_bytes(403, "text/plain; charset=utf-8", b"remote touch is not enabled\n")
                     return
 
-            event = query.get("e", [""])[0]
             if event == "up":
                 app.touch.up()
             elif event in ("down", "move"):
