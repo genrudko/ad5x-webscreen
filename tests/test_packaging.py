@@ -53,12 +53,18 @@ class TestPackaging(unittest.TestCase):
         control = (ROOT / "control.sh").read_text(encoding="utf-8")
         config = (ROOT / "webscreen.ini.example").read_text(encoding="utf-8")
         daemon = (ROOT / "webscreen.py").read_text(encoding="utf-8")
-        joined = "\n".join((install, control, config, daemon))
-        self.assertNotIn("control.token", joined)
+        runtime_joined = "\n".join((control, config, daemon))
+        self.assertNotIn("control.token", runtime_joined)
         self.assertNotIn("import secrets", install)
         self.assertNotIn("X-WebScreen-Token", daemon)
         self.assertNotIn("control_token", daemon)
         self.assertNotIn("token)", control)
+
+    def test_install_removes_legacy_control_token_and_security_section(self):
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn('rm -f "$DATA_DIR/control.token"', install)
+        self.assertIn('control_token_path', install)
+        self.assertIn('migrate_legacy_security', install)
 
     def test_install_registers_update_manager_without_modifying_zmod_sources(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
