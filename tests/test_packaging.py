@@ -47,6 +47,13 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("status)", text)
         self.assertNotIn("webscreen_poc", text)
 
+    def test_install_token_generation_does_not_depend_on_host_python(self):
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("/dev/urandom", install)
+        self.assertIn("od -An -tx1", install)
+        self.assertNotIn("import secrets", install)
+        self.assertNotIn('command -v python3', install)
+
     def test_install_registers_update_manager_without_modifying_zmod_sources(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("plugins.moonraker.conf", install)
@@ -54,8 +61,6 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("S71ad5x_webscreen", install)
         self.assertNotIn("zmod/.shell/root/start.sh", install)
         self.assertNotIn("sed -i", install.replace("sed -i '/ad5x_webscreen/d'", ""))
-
-
 
     def test_power_on_hook_uses_zmod_user_power_on_file_with_managed_markers(self):
         text = (ROOT / "power_on_hook.sh").read_text()
@@ -66,7 +71,6 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("remove)", text)
         self.assertNotIn("/usr/data/zmod/zmod/.shell/root/start.sh", text)
         self.assertNotIn("/usr/prog/app_startup.sh", text)
-
 
     def test_power_on_hook_install_remove_is_idempotent_and_preserves_other_content(self):
         hook = ROOT / "power_on_hook.sh"
