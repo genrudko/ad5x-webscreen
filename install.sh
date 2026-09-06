@@ -44,20 +44,6 @@ if [ ! -f "$CONFIG" ]; then
     cp "$SCRIPT_DIR/webscreen.ini.example" "$CONFIG"
 fi
 
-if [ ! -s "$TOKEN_FILE" ]; then
-    # Do not use the printer host Python here. Z-Mod exposes a Python 3.8
-    # executable on the host whose shared-library environment is not valid for
-    # arbitrary direct invocation. Token generation only needs kernel entropy.
-    TOKEN=$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    if [ "${#TOKEN}" -ne 48 ]; then
-        echo "Failed to generate WebScreen control token" >&2
-        exit 1
-    fi
-    ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
-    unset TOKEN
-    chmod 600 "$TOKEN_FILE"
-fi
-
 if [ -f /ZMOD ]; then
     python3 -c 'from PIL import Image' >/dev/null 2>&1 || {
         echo "Pillow is required in the Z-Mod Python environment" >&2
@@ -68,6 +54,24 @@ else
         echo "Pillow is required in the Z-Mod chroot" >&2
         exit 1
     }
+fi
+
+if [ ! -s "$TOKEN_FILE" ]; then
+    # Use exactly the same Z-Mod Python runtime that the WebScreen service uses.
+    # The printer host Python has an incomplete shared-library environment, and
+    # BusyBox utilities differ between firmware builds.
+    if [ -f /ZMOD ]; then
+        TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
+    else
+        TOKEN=$(chroot "$MOD" /bin/sh -lc "python3 -c 'import secrets; print(secrets.token_hex(24))'")
+    fi
+    if [ "${#TOKEN}" -ne 48 ]; then
+        echo "Failed to generate WebScreen control token" >&2
+        exit 1
+    fi
+    ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
+    unset TOKEN
+    chmod 600 "$TOKEN_FILE"
 fi
 
 if [ -f /ZMOD ]; then
