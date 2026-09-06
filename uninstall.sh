@@ -3,6 +3,7 @@ set -e
 
 PLUGIN_NAME="ad5x_webscreen"
 UPDATE_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.update.conf]"
+WEBCAM_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
 
 ZMOD_ENV=""
 [ -f /usr/data/zmod/zmod/.shell/0.sh ] && ZMOD_ENV=/usr/data/zmod/zmod/.shell/0.sh
@@ -36,7 +37,7 @@ fi
 MOONRAKER_PLUGINS="$CONFIG_ROOT/mod_data/plugins.moonraker.conf"
 if [ -f "$MOONRAKER_PLUGINS" ]; then
     tmp="$MOONRAKER_PLUGINS.tmp.$$"
-    awk -v line="$UPDATE_INCLUDE" '$0 != line { print }' "$MOONRAKER_PLUGINS" > "$tmp"
+    awk -v update="$UPDATE_INCLUDE" -v webcam="$WEBCAM_INCLUDE" '$0 != update && $0 != webcam { print }' "$MOONRAKER_PLUGINS" > "$tmp"
     mv "$tmp" "$MOONRAKER_PLUGINS"
 fi
 
