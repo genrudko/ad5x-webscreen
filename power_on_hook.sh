@@ -67,11 +67,16 @@ for AD5X_WEBSCREEN_CANDIDATE in /usr/data/config /opt/config; do
     fi
 done
 if [ -n "$AD5X_WEBSCREEN_BASE" ]; then
+    AD5X_WEBSCREEN_CONFIGURE="$AD5X_WEBSCREEN_BASE/mod_data/plugins/ad5x_webscreen/configure_webcam.sh"
     AD5X_WEBSCREEN_CONTROL="$AD5X_WEBSCREEN_BASE/mod_data/plugins/ad5x_webscreen/control.sh"
     AD5X_WEBSCREEN_BOOT_LOG="$AD5X_WEBSCREEN_BASE/mod_data/ad5x_webscreen/boot.log"
+    if [ -x "$AD5X_WEBSCREEN_CONFIGURE" ]; then
+        "$AD5X_WEBSCREEN_CONFIGURE" --restart-if-changed >> "$AD5X_WEBSCREEN_BOOT_LOG" 2>&1 || \
+            echo "AD5X WebScreen: boot webcam configuration refresh failed" >> "$AD5X_WEBSCREEN_BOOT_LOG"
+    fi
     "$AD5X_WEBSCREEN_CONTROL" start >> "$AD5X_WEBSCREEN_BOOT_LOG" 2>&1 &
 fi
-unset AD5X_WEBSCREEN_CANDIDATE AD5X_WEBSCREEN_CONTROL AD5X_WEBSCREEN_BOOT_LOG AD5X_WEBSCREEN_BASE
+unset AD5X_WEBSCREEN_CANDIDATE AD5X_WEBSCREEN_CONFIGURE AD5X_WEBSCREEN_CONTROL AD5X_WEBSCREEN_BOOT_LOG AD5X_WEBSCREEN_BASE
 # <<< AD5X WebScreen <<<
 BLOCK
 
