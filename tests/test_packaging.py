@@ -18,7 +18,8 @@ class TestPackaging(unittest.TestCase):
             "S71ad5x_webscreen",
             "webscreen.ini.example",
             "moonraker.update.conf",
-            "moonraker.webcam.conf",
+            "moonraker.webcam.conf.template",
+            "configure_webcam.sh",
             "control.sh",
             "README.md",
             "VERSION",
@@ -79,6 +80,9 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("/usr/data/config/mod_data/power_on.sh", text)
         self.assertIn("AD5X WebScreen", text)
         self.assertIn("control.sh", text)
+        self.assertIn("configure_webcam.sh", text)
+        self.assertIn("--restart-if-changed", text)
+        self.assertLess(text.index('"$AD5X_WEBSCREEN_CONFIGURE" --restart-if-changed'), text.index('"$AD5X_WEBSCREEN_CONTROL" start'))
         self.assertIn("install)", text)
         self.assertIn("remove)", text)
         self.assertNotIn("/usr/data/zmod/zmod/.shell/root/start.sh", text)
@@ -132,25 +136,34 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("ad5x_webscreen", text)
         self.assertNotIn("rm -rf /usr/data/zmod", text)
 
-    def test_fluidd_screen_webcam_matches_creator_contract(self):
-        text = (ROOT / "moonraker.webcam.conf").read_text(encoding="utf-8")
+    def test_fluidd_screen_webcam_template_uses_absolute_runtime_urls(self):
+        text = (ROOT / "moonraker.webcam.conf.template").read_text(encoding="utf-8")
         self.assertIn("[webcam screen]", text)
         self.assertIn("service: iframe", text)
         self.assertIn("target_fps: 10", text)
-        self.assertIn("stream_url: /screen/stream", text)
-        self.assertIn("snapshot_url: /screen/snapshot", text)
+        self.assertIn("stream_url: http://@PRINTER_IP@:8010/stream", text)
+        self.assertIn("snapshot_url: http://@PRINTER_IP@:8010/snapshot", text)
         self.assertIn("aspect_ratio: 800:480", text)
+
+    def test_runtime_webcam_config_is_ignored_by_git(self):
+        text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("moonraker.webcam.runtime.conf", text)
 
     def test_install_and_uninstall_manage_webcam_include_idempotently(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         uninstall = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
-        include = "[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
+        include = "[include plugins/$PLUGIN_NAME/moonraker.webcam.runtime.conf]"
+        legacy = "[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
         self.assertIn(include, install)
         self.assertIn(include, uninstall)
+        self.assertIn(legacy, install)
+        self.assertIn(legacy, uninstall)
         self.assertIn('for INCLUDE_LINE in "$UPDATE_INCLUDE" "$WEBCAM_INCLUDE"; do', install)
         self.assertIn('grep -qF "$INCLUDE_LINE"', install)
         self.assertIn("printf '%s\\n' \"$INCLUDE_LINE\"", install)
-        self.assertIn('awk -v update="$UPDATE_INCLUDE" -v webcam="$WEBCAM_INCLUDE"', uninstall)
+        self.assertIn("LEGACY_WEBCAM_INCLUDE", uninstall)
+        self.assertIn("configure_webcam.sh", install)
+        self.assertIn("moonraker.webcam.runtime.conf", install)
 
 
 if __name__ == "__main__":
