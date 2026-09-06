@@ -22,10 +22,7 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(cfg.touch_start_enabled)
         self.assertEqual(cfg.touch_failsafe_s, 1.0)
         self.assertEqual(cfg.touch_pressure, 1200)
-        self.assertEqual(
-            cfg.control_token_path,
-            "/opt/config/mod_data/ad5x_webscreen/control.token",
-        )
+        self.assertFalse(hasattr(cfg, "control_token_path"))
 
     def test_ini_overrides_and_validates(self):
         with tempfile.TemporaryDirectory() as td:
@@ -46,8 +43,6 @@ failsafe_seconds = 1.5
 pressure = 900
 helix_settings = /tmp/helix.json
 
-[security]
-control_token_path = /tmp/token
 """.strip(),
                 encoding="utf-8",
             )
@@ -61,7 +56,6 @@ control_token_path = /tmp/token
             self.assertEqual(cfg.touch_failsafe_s, 1.5)
             self.assertEqual(cfg.touch_pressure, 900)
             self.assertEqual(cfg.helix_settings, "/tmp/helix.json")
-            self.assertEqual(cfg.control_token_path, "/tmp/token")
 
     def test_invalid_port_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
@@ -129,9 +123,7 @@ class TestTouchMapping(unittest.TestCase):
             webscreen.AxisRange(0, 800),
             webscreen.AxisRange(0, 480),
         )
-        # Screen 410,260 -> raw 200,120.
         self.assertEqual(mapper.map_screen(410, 260), (200, 120))
-        # Clamp outside raw axis ranges.
         self.assertEqual(mapper.map_screen(-1000, -1000), (0, 0))
         self.assertEqual(mapper.map_screen(10000, 10000), (800, 480))
 
@@ -143,19 +135,25 @@ class TestTouchMapping(unittest.TestCase):
 
 
 class TestSecurityAndUi(unittest.TestCase):
-    def test_control_token_match_is_exact_and_constant_time_api(self):
-        self.assertTrue(webscreen.control_token_matches("secret", "secret"))
-        self.assertFalse(webscreen.control_token_matches("secret", "Secret"))
-        self.assertFalse(webscreen.control_token_matches("secret", ""))
-        self.assertFalse(webscreen.control_token_matches("", ""))
-
-    def test_ui_uses_intrinsic_image_dimensions_and_control_token_header(self):
+    def test_ui_has_no_control_token_friction(self):
         html = webscreen.render_index_html().decode("utf-8")
         self.assertIn("img.naturalWidth", html)
         self.assertIn("img.naturalHeight", html)
-        self.assertIn("X-WebScreen-Token", html)
-        self.assertIn("sessionStorage", html)
         self.assertIn("Enable remote touch", html)
+        self.assertNotIn("X-WebScreen-Token", html)
+        self.assertNotIn("sessionStorage", html)
+        self.assertNotIn("control token", html.lower())
+        self.assertNotIn("prompt(", html)
+
+    def test_fluidd_iframe_surface_is_clean_and_directly_interactive(self):
+        html = webscreen.render_iframe_html().decode("utf-8")
+        self.assertIn('src="streams"', html)
+        self.assertIn("touch?e=", html)
+        self.assertNotIn("touch/enable", html)
+        self.assertNotIn("X-WebScreen-Token", html)
+        self.assertNotIn("sessionStorage", html)
+        self.assertNotIn("<button", html)
+        self.assertNotIn("<pre", html)
 
 
 class TestFramebufferGeometry(unittest.TestCase):
@@ -191,15 +189,6 @@ if __name__ == "__main__":
     unittest.main()
 
 class TestRuntimeHelpers(unittest.TestCase):
-    def test_control_token_file_is_stripped_and_must_not_be_empty(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = pathlib.Path(td) / "token"
-            p.write_text("abc123\n", encoding="utf-8")
-            self.assertEqual(webscreen.read_control_token(p), "abc123")
-            p.write_text("\n", encoding="utf-8")
-            with self.assertRaises(ValueError):
-                webscreen.read_control_token(p)
-
     def test_touch_device_discovery_prefers_tsc2007(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -268,6 +257,91 @@ class TestServiceSurface(unittest.TestCase):
         self.assertTrue(hasattr(webscreen, "TouchController"))
 
 
+class TestHttpSurface(unittest.TestCase):
+    class FakeState:
+        def __init__(self):
+            import threading
+            self.lock = threading.RLock()
+            self.touch_enabled = False
+            self.touch_error = ""
+
+    class FakeTouch:
+        def __init__(self, state):
+            self.state = state
+            self.enabled_calls = 0
+            self.down_calls = []
+
+        def enable(self):
+            self.enabled_calls += 1
+            self.state.touch_enabled = True
+
+        def disable(self):
+            self.state.touch_enabled = False
+
+        def down(self, x, y):
+            self.down_calls.append((x, y))
+
+        def move(self, x, y):
+            pass
+
+        def up(self):
+            pass
+
+    class FakeApp:
+        def __init__(self):
+            import types
+            self.config = types.SimpleNamespace(touch_allowed=True)
+            self.state = TestHttpSurface.FakeState()
+            self.touch = TestHttpSurface.FakeTouch(self.state)
+
+        def clamp_screen_coords(self, x, y):
+            return x, y
+
+    def _serve(self):
+        import threading
+        app = self.FakeApp()
+        server = webscreen.WebScreenHTTPServer(
+            ("127.0.0.1", 0), webscreen.WebScreenRequestHandler, app
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return app, server, thread
+
+    def test_stream_endpoint_is_iframe_html(self):
+        import urllib.request
+        app, server, thread = self._serve()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/stream", timeout=2
+            ) as response:
+                body = response.read().decode("utf-8")
+                self.assertEqual(response.status, 200)
+                self.assertIn('src="streams"', body)
+                self.assertNotIn("control token", body.lower())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_first_touch_down_auto_arms_without_auth(self):
+        import urllib.request
+        app, server, thread = self._serve()
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/touch?e=down&x=123&y=45",
+                data=b"",
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+            self.assertEqual(app.touch.enabled_calls, 1)
+            self.assertEqual(app.touch.down_calls, [(123.0, 45.0)])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 class TestProbeDegradation(unittest.TestCase):
     class FakeFramebuffer:
         def open(self):
@@ -289,30 +363,19 @@ class TestProbeDegradation(unittest.TestCase):
         def shutdown(self):
             pass
 
-    def _service(self, token_path):
-        import dataclasses
-        cfg = dataclasses.replace(
-            webscreen.WebScreenConfig.defaults(),
-            control_token_path=str(token_path),
-        )
-        service = webscreen.WebScreenService(cfg)
+    def _service(self):
+        service = webscreen.WebScreenService(webscreen.WebScreenConfig.defaults())
         service.framebuffer = self.FakeFramebuffer()
         service.touch = self.BrokenTouch()
         return service
 
     def test_video_probe_degrades_when_touch_probe_fails(self):
-        with tempfile.TemporaryDirectory() as td:
-            token = pathlib.Path(td) / "token"
-            token.write_text("secret\n", encoding="utf-8")
-            service = self._service(token)
-            service.probe(require_touch=False)
-            self.assertEqual(service.state.geometry.xres, 800)
-            self.assertIn("touch unavailable", service.state.touch_error)
+        service = self._service()
+        service.probe(require_touch=False)
+        self.assertEqual(service.state.geometry.xres, 800)
+        self.assertIn("touch unavailable", service.state.touch_error)
 
     def test_check_probe_still_requires_working_touch(self):
-        with tempfile.TemporaryDirectory() as td:
-            token = pathlib.Path(td) / "token"
-            token.write_text("secret\n", encoding="utf-8")
-            service = self._service(token)
-            with self.assertRaisesRegex(RuntimeError, "touch unavailable"):
-                service.probe(require_touch=True)
+        service = self._service()
+        with self.assertRaisesRegex(RuntimeError, "touch unavailable"):
+            service.probe(require_touch=True)
