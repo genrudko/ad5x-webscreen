@@ -13,17 +13,19 @@
 
 ## Fluidd SCREEN
 
-Z-Mod AD5X уже проксирует `/screen/` на `127.0.0.1:8010`. Плагин регистрирует в Moonraker отдельную камеру по той же схеме, что Creator 5 Pro:
+На AD5X штатный `zmod_httpd` не проксирует `/screen/`, поэтому плагин генерирует Moonraker webcam config с абсолютным URL на фактический IPv4 принтера:
 
 ```ini
 [webcam screen]
 enabled: true
 service: iframe
 target_fps: 10
-stream_url: /screen/stream
-snapshot_url: /screen/snapshot
+stream_url: http://<printer-ip>:8010/stream
+snapshot_url: http://<printer-ip>:8010/snapshot
 aspect_ratio: 800:480
 ```
+
+IPv4 определяется при установке и повторно на загрузке. Runtime webcam config хранится в `moonraker.webcam.runtime.conf`, игнорируется Git и перегенерируется только при изменении адреса/шаблона. Если URL реально изменился, Moonraker перезапускается; при неизменном config рестарта нет.
 
 После перезапуска Moonraker/принтера в карточке **Видеокамеры** Fluidd появляется камера `SCREEN`. Iframe показывает экран и принимает pointer/touch события прямо по изображению.
 
@@ -57,7 +59,7 @@ ENABLE_PLUGIN name=ad5x_webscreen
 Installer:
 
 - проверяет AD5X и наличие Pillow в Z-Mod chroot;
-- создаёт runtime config вне Git checkout;
+- создаёт основной runtime config в `mod_data/ad5x_webscreen` и генерирует игнорируемый Git webcam runtime config с текущим IPv4;
 - ставит SysV hook `S71ad5x_webscreen` в Z-Mod chroot;
 - регистрирует autostart через управляемый блок `mod_data/power_on.sh`;
 - добавляет Moonraker update-manager и Fluidd `SCREEN` webcam includes в `plugins.moonraker.conf`;
@@ -117,8 +119,12 @@ DISABLE_PLUGIN name=ad5x_webscreen
 
 `uninstall.sh` останавливает сервис, удаляет только принадлежащие WebScreen init/autostart/Moonraker include hooks и runtime config. Чтобы сохранить config при ручном удалении, задайте `AD5X_WEBSCREEN_KEEP_CONFIG=1`.
 
-## Оставшийся acceptance gate v0.1.0
+## Acceptance v0.1.0
 
-- reboot/autostart + появление `SCREEN` во Fluidd;
+Уже пройдено на реальном AD5X: reboot/autostart, регистрация `SCREEN` во Fluidd, live iframe и управление touch без token/enable шага.
+
+Осталось:
+
 - update/uninstall lifecycle;
+- live-проверка смены IPv4/DHCP без ручного редактирования config;
 - реальная печать с открытым `SCREEN` и контроль Klipper/Moonraker на E0011 / `timer too close`.
