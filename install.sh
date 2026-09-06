@@ -4,6 +4,7 @@ set -e
 PLUGIN_NAME="ad5x_webscreen"
 CHROOT_PLUGIN_DIR="/opt/config/mod_data/plugins/$PLUGIN_NAME"
 UPDATE_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.update.conf]"
+WEBCAM_INCLUDE="[include plugins/$PLUGIN_NAME/moonraker.webcam.conf]"
 
 ZMOD_ENV=""
 [ -f /usr/data/zmod/zmod/.shell/0.sh ] && ZMOD_ENV=/usr/data/zmod/zmod/.shell/0.sh
@@ -35,7 +36,6 @@ DATA_DIR="$CONFIG_ROOT/mod_data/$PLUGIN_NAME"
 LOG_DIR="$CONFIG_ROOT/mod_data/log"
 MOONRAKER_PLUGINS="$CONFIG_ROOT/mod_data/plugins.moonraker.conf"
 CONFIG="$DATA_DIR/webscreen.ini"
-TOKEN_FILE="$DATA_DIR/control.token"
 
 chmod +x "$SCRIPT_DIR/webscreen.py" "$SCRIPT_DIR/S71ad5x_webscreen" "$SCRIPT_DIR/control.sh" "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh" "$SCRIPT_DIR/update.sh" "$SCRIPT_DIR/power_on_hook.sh"
 mkdir -p "$DATA_DIR" "$LOG_DIR" "$INIT_DIR"
@@ -56,24 +56,6 @@ else
     }
 fi
 
-if [ ! -s "$TOKEN_FILE" ]; then
-    # Use exactly the same Z-Mod Python runtime that the WebScreen service uses.
-    # The printer host Python has an incomplete shared-library environment, and
-    # BusyBox utilities differ between firmware builds.
-    if [ -f /ZMOD ]; then
-        TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
-    else
-        TOKEN=$(chroot "$MOD" /bin/sh -lc "python3 -c 'import secrets; print(secrets.token_hex(24))'")
-    fi
-    if [ "${#TOKEN}" -ne 48 ]; then
-        echo "Failed to generate WebScreen control token" >&2
-        exit 1
-    fi
-    ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
-    unset TOKEN
-    chmod 600 "$TOKEN_FILE"
-fi
-
 if [ -f /ZMOD ]; then
     ln -sf "$SCRIPT_DIR/S71ad5x_webscreen" "$SERVICE"
 else
@@ -83,9 +65,11 @@ fi
 "$SCRIPT_DIR/power_on_hook.sh" install
 
 [ -f "$MOONRAKER_PLUGINS" ] || : > "$MOONRAKER_PLUGINS"
-if ! grep -qF "$UPDATE_INCLUDE" "$MOONRAKER_PLUGINS"; then
-    printf '%s\n' "$UPDATE_INCLUDE" >> "$MOONRAKER_PLUGINS"
-fi
+for INCLUDE_LINE in "$UPDATE_INCLUDE" "$WEBCAM_INCLUDE"; do
+    if ! grep -qF "$INCLUDE_LINE" "$MOONRAKER_PLUGINS"; then
+        printf '%s\n' "$INCLUDE_LINE" >> "$MOONRAKER_PLUGINS"
+    fi
+done
 
 # Start immediately. The init script performs a port preflight and writes its PID only after startup succeeds.
 if [ -f /ZMOD ]; then
@@ -95,7 +79,6 @@ else
 fi
 
 echo "AD5X WebScreen installed"
-echo "Control token: $TOKEN_FILE"
 echo "Default URL: http://<printer-ip>:8010/"
 
 if [ "${AD5X_WEBSCREEN_NO_REBOOT:-0}" != "1" ]; then
